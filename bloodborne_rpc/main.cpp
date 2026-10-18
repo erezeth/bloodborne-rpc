@@ -1,6 +1,3 @@
-// SPDX-FileCopyrightText: Copyright 2026 [NamaKamu]
-// SPDX-License-Identifier: GPL-2.0-or-later
-//
 // Bloodborne PC (bbport) - Discord Rich Presence companion.
 // READ-ONLY: this tool never writes to the game's memory.
 
@@ -81,7 +78,7 @@ static void log(const std::string& msg) {
 }
 
 static void fatal(const std::string& msg) {
-    log("ERROR: " + msg);
+    log("[ERROR] " + msg);
     if (!std::getenv("BB_GAME_PID")) {
         MessageBoxA(nullptr, msg.c_str(), "BloodborneRPC", MB_ICONERROR | MB_OK);
     }
@@ -99,7 +96,7 @@ static fs::path exe_directory() {
 
 struct Config {
     std::string client_id;
-    std::string process_name = "Bloodborne.exe"; // Default diubah ke Bloodborne.exe
+    std::string process_name = "bb-probe.exe"; 
     std::vector<uintptr_t> image_bases = {0x800000000};
     int attach_delay = 5;
     int update_interval = 15;
@@ -193,7 +190,7 @@ public:
     }
 };
 
-// Fungsi BARU: Cari semua PID dengan nama proses tersebut
+// Find all PIDs matching the process name
 static std::vector<DWORD> find_processes(const std::string& name) {
     std::vector<DWORD> pids;
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -363,7 +360,7 @@ public:
                 if (!ReadFile(pipe_, body.data(), hdr[1], &got, nullptr) || got != hdr[1]) { close(); return false; }
             }
             if (hdr[0] == 2) {
-                log("Discord closed the connection: " + body);
+                log("Discord closed the connection.");
                 close(); return false;
             }
             wait = false;
@@ -499,7 +496,7 @@ static std::string play_mode() {
 
 static bool should_skip(const Config& cfg, const std::string& mode, std::string& reason) {
     if (cfg.offline_only && !mode.empty() && mode != "offline") {
-        reason = "play mode is " + mode + ", which has its own Rich Presence";
+        reason = "Play mode is " + mode + ", which has its own Rich Presence.";
         return true;
     }
     return false;
@@ -509,32 +506,40 @@ static bool should_skip(const Config& cfg, const std::string& mode, std::string&
 
 static void probe_mode(const Config& cfg) {
     auto pids = find_processes(cfg.process_name);
-    if (pids.empty()) { log(cfg.process_name + " is not running"); return; }
+    if (pids.empty()) { 
+        log("Process " + cfg.process_name + " is not running."); 
+        return; 
+    }
     
-    log("Ditemukan " + std::to_string(pids.size()) + " proses bernama " + cfg.process_name);
+    log("Found " + std::to_string(pids.size()) + " process(es) named " + cfg.process_name);
     
     for (DWORD pid : pids) {
         Process p;
         if (!p.open(pid)) {
-            log("pid=" + std::to_string(pid) + " -> GAGAL BUKA PROCESS (mungkin butuh Admin)");
+            log("PID " + std::to_string(pid) + ": Access denied (Try running as Administrator).");
             continue;
         }
         uintptr_t base = find_base(p, cfg.image_bases);
         if (!base) {
-            log("pid=" + std::to_string(pid) + " -> base=NO (Ini bukan game utamanya / belum masuk gameplay)");
+            log("PID " + std::to_string(pid) + ": Base not found (Wrong process or still in menus).");
             continue;
         }
-        log("pid=" + std::to_string(pid) + " -> base=" + hex(base) + " (KETEMU!)");
+        log("PID " + std::to_string(pid) + ": Base found at " + hex(base) + " (MATCH!)");
         auto stats = read_stats(p, base);
-        if (!stats) { log("  stats: null (masih di menu / loading)"); continue; }
-        log("  level=" + std::to_string(stats->level) + " echoes=" + std::to_string(stats->echoes)
-            + " insight=" + std::to_string(stats->insight) + " maxhp=" + std::to_string(stats->maxhp));
+        if (!stats) { 
+            log("  -> Stats: null (Still in menus / loading)."); 
+            continue; 
+        }
+        log("  -> Level: " + std::to_string(stats->level) + 
+            " | Echoes: " + std::to_string(stats->echoes) + 
+            " | Insight: " + std::to_string(stats->insight) + 
+            " | Max HP: " + std::to_string(stats->maxhp));
     }
 }
 
 static void run(const Config& cfg) {
     if (cfg.client_id.empty() || !std::all_of(cfg.client_id.begin(), cfg.client_id.end(), ::isdigit)) {
-        fatal("config.json: client_id must be your Discord Application ID (numbers only).");
+        fatal("Config Error: client_id must be your Discord Application ID (numbers only).");
         return;
     }
 
@@ -547,12 +552,12 @@ static void run(const Config& cfg) {
     const std::string mode = play_mode();
     std::string reason;
     if (should_skip(cfg, mode, reason)) {
-        log("Not starting: " + reason + ".");
+        log("Skipping: " + reason);
         return;
     }
     
-    if (companion) log("Companion mode: watching game pid " + std::to_string(companion_pid));
-    else            log("Waiting for " + cfg.process_name + " ...");
+    if (companion) log("Companion Mode: Watching game PID " + std::to_string(companion_pid));
+    else           log("Standalone Mode: Waiting for " + cfg.process_name + " ...");
 
     const auto poll = std::chrono::milliseconds((int)(std::max(0.25, std::min(5.0, cfg.poll_interval)) * 1000));
     const int update_interval = std::max(15, cfg.update_interval);
@@ -561,7 +566,7 @@ static void run(const Config& cfg) {
     while (true) {
         DWORD pid = companion_pid;
         
-        // Kalau bukan companion mode, cari PID yang benar (yang punya memory game)
+        // If not in companion mode, find the correct PID (the one with game memory)
         if (!companion) {
             auto pids = find_processes(cfg.process_name);
             pid = 0;
@@ -569,29 +574,29 @@ static void run(const Config& cfg) {
                 Process test_proc;
                 if (test_proc.open(p) && find_base(test_proc, cfg.image_bases)) {
                     pid = p;
-                    break; // Ketemu proses yang benar!
+                    break; // Found the correct process!
                 }
             }
         }
 
-        if (companion && !pid_alive(pid)) { log("Game process is not running; exiting."); return; }
+        if (companion && !pid_alive(pid)) { log("Game process closed, exiting."); return; }
         if (!pid) { std::this_thread::sleep_for(std::chrono::seconds(3)); continue; }
 
         std::this_thread::sleep_for(std::chrono::seconds(cfg.attach_delay));
-        if (companion && !pid_alive(pid)) { log("Game closed before the tool attached; exiting."); return; }
+        if (companion && !pid_alive(pid)) { log("Game closed before attachment, exiting."); return; }
 
         Process proc;
-        if (!proc.open(pid)) { log("Cannot open process; retrying..."); std::this_thread::sleep_for(std::chrono::seconds(10)); continue; }
+        if (!proc.open(pid)) { log("Failed to open process (Try running as Admin). Retrying..."); std::this_thread::sleep_for(std::chrono::seconds(10)); continue; }
         uintptr_t base = find_base(proc, cfg.image_bases);
-        if (!base) { log("Image base not found yet. Retrying..."); std::this_thread::sleep_for(std::chrono::seconds(5)); continue; }
+        if (!base) { log("Game memory not ready (might be loading). Retrying..."); std::this_thread::sleep_for(std::chrono::seconds(5)); continue; }
 
         DiscordPipe discord;
         while (pid_alive(pid, check_name)) {
             if (discord.connect_pipe(cfg.client_id)) break;
-            log("Cannot connect to Discord. Retrying...");
+            log("Failed to connect to Discord. Retrying in 5s...");
             std::this_thread::sleep_for(std::chrono::seconds(5));
         }
-        log("Attached to pid " + std::to_string(pid) + ", base " + hex(base));
+        log("Attached to PID " + std::to_string(pid) + " (Base: " + hex(base) + ")");
 
         const int64_t start_s = (int64_t)std::time(nullptr);
         Session session;
@@ -620,7 +625,7 @@ static void run(const Config& cfg) {
                 if (discord.send(1, cmd.dump())) {
                     last_payload = payload;
                     last_sent = now;
-                    log("Presence: " + payload.value("details", std::string()) + " | " + payload.value("state", std::string()));
+                    log("Presence Updated: " + payload.value("details", std::string()) + " | " + payload.value("state", std::string()));
                 } else {
                     discord.close();
                 }
@@ -631,9 +636,9 @@ static void run(const Config& cfg) {
             json cmd = {{"cmd", "SET_ACTIVITY"}, {"args", {{"pid", (int)pid}}}, {"nonce", "0"}};
             discord.send(1, cmd.dump());
         }
-        log("Game closed.");
+        log("Game closed. Cleaning up presence.");
         if (companion) return;
-        log("Waiting again...");
+        log("Waiting for game again...");
     }
 }
 
