@@ -1,6 +1,3 @@
-// SPDX-FileCopyrightText: Copyright 2026 [NamaKamu]
-// SPDX-License-Identifier: GPL-2.0-or-later
-//
 // Bloodborne PC (bbport) - Discord Rich Presence companion.
 // READ-ONLY: this tool never writes to the game's memory.
 
@@ -55,7 +52,7 @@ constexpr TitleDef HUNTER_TITLES[] = {
 };
 
 // ------------------------------------------------------------------ GAME DATA TABLES (from BBSC)
-constexpr std::array<std::pair<s32, const char*>, 21> BbscPlaceNames{{
+constexpr std::array<std::pair<int32_t, const char*>, 21> BbscPlaceNames{{
     {2100, "Hunter's Dream"}, {2110, "Abandoned Old Workshop"}, {2200, "Hemwick Charnel Lane"},
     {2300, "Old Yharnam"}, {2400, "Cathedral Ward"}, {2410, "Central Yharnam"},
     {2411, "Iosefka's Clinic"}, {2420, "Upper Cathedral Ward"}, {2421, "Healing Church Workshop"},
@@ -65,7 +62,7 @@ constexpr std::array<std::pair<s32, const char*>, 21> BbscPlaceNames{{
     {3400, "Hunter's Nightmare"}, {3500, "Research Hall"}, {3600, "Fishing Hamlet"},
 }};
 
-constexpr std::array<std::pair<s32, const char*>, 87> BbscBossNames{{
+constexpr std::array<std::pair<int32_t, const char*>, 87> BbscBossNames{{
     {1000, "Madman's Escort"}, {1010, "Forgotten Madman"}, {6400, "Old Hunter Henryk"},
     {6500, "Valtr, Master of the League"}, {6505, "Valtr, Beast Eater"}, {6530, "Yamamura the Wanderer"},
     {6540, "Younger Madaras Twin"}, {6550, "Mensis Scholar Damian"}, {6600, "Henriett"},
@@ -97,7 +94,9 @@ constexpr std::array<std::pair<s32, const char*>, 87> BbscBossNames{{
     {901160, "Ardeo Man"}, {901170, "Defeated Hunter"}, {901180, "Choir Intelligencer Edgar"},
 }};
 
-const char* FindBbscName(std::span<const std::pair<s32, const char*>> names, s32 id) {
+// Ganti std::span dengan template untuk kompatibilitas C++17
+template <size_t N>
+const char* FindBbscName(const std::array<std::pair<int32_t, const char*>, N>& names, int32_t id) {
     for (const auto& [key, text] : names) {
         if (key == id) return text;
     }
@@ -106,8 +105,8 @@ const char* FindBbscName(std::span<const std::pair<s32, const char*>> names, s32
 
 static std::string GetAreaName(uint32_t map_id) {
     if (map_id == 0) return "";
-    uint32_t area = (map_id >> 24) & 0xFF;
-    uint32_t block = (map_id >> 16) & 0xFF;
+    int32_t area = (map_id >> 24) & 0xFF;
+    int32_t block = (map_id >> 16) & 0xFF;
     
     if (area == 29) return "Chalice Dungeon";
     if (const char* name = FindBbscName(BbscPlaceNames, area * 100 + block * 10)) return name;
