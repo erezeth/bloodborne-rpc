@@ -288,7 +288,7 @@ static json build_presence(const std::optional<Stats>& stats, Session& session, 
     else { char b[128]; std::snprintf(b, sizeof(b), "%s \u2022 Lv %d", title.c_str(), level); data["details"] = b; }
     
     std::vector<std::string> parts;
-    if (cfg.show_echoes) { char b[128]; std::snprintf(b, sizeof(b), "\U0001FA78 %s Echoes", format_thousands(stats->echoes).c_str()); parts.push_back(b); }
+    if (cfg.show_echoes) { char b[128]; std::snprintf(b, sizeof(b), "%s Echoes", format_thousands(stats->echoes).c_str()); parts.push_back(b); }
     if (cfg.show_insight) { char b[64]; std::snprintf(b, sizeof(b), "Insight %d", stats->insight); parts.push_back(b); }
     if (cfg.show_session_levels && session.levels_gained() > 0) { int g = session.levels_gained(); char b[64]; std::snprintf(b, sizeof(b), "+%d level%s", g, g == 1 ? "" : "s"); parts.push_back(b); }
     
