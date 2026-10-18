@@ -1,0 +1,18 @@
+name: Build BloodborneRPC
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+    - name: Build
+      run: |
+        cd tools/bloodborne_rpc
+        cl /nologo /std:c++17 /O2 /EHsc /MT /utf-8 /DUNICODE /D_UNICODE main.cpp /Fe:BloodborneRPC.exe /link /SUBSYSTEM:WINDOWS kernel32.lib user32.lib
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: BloodborneRPC
+        path: tools/bloodborne_rpc/BloodborneRPC.exe
