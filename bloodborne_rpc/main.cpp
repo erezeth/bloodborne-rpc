@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 [NamaKamu]
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
 // Bloodborne PC (bbport) - Discord Rich Presence companion.
 // READ-ONLY: this tool never writes to the game's memory.
 
@@ -20,6 +23,7 @@
 #include <thread>
 #include <vector>
 #include <algorithm>
+#include <map>
 
 #include "json.hpp"
 
@@ -30,6 +34,9 @@ using clk = std::chrono::steady_clock;
 // ------------------------------------------------------------------ constants
 
 constexpr uintptr_t GAME_DATA_MAN = 0x553B130;
+constexpr uintptr_t MAP_ID_ADDR = 0x553B148;    
+constexpr uintptr_t BOSS_GAUGE_ADDR = 0x5562878; 
+
 constexpr int PGD_HP = 0x14, PGD_MAXHP = 0x18;
 constexpr int PGD_INSIGHT = 0x84, PGD_LEVEL = 0x90, PGD_ECHOES = 0x94;
 constexpr int PGD_READ_SIZE = 0x98;
@@ -46,6 +53,69 @@ constexpr TitleDef HUNTER_TITLES[] = {
     {40, "Seasoned Hunter"}, {80, "Veteran Hunter"},
     {120, "Dreaming Hunter"}, {180, "Hunter of Hunters"},
 };
+
+// ------------------------------------------------------------------ GAME DATA TABLES (from BBSC)
+constexpr std::array<std::pair<s32, const char*>, 21> BbscPlaceNames{{
+    {2100, "Hunter's Dream"}, {2110, "Abandoned Old Workshop"}, {2200, "Hemwick Charnel Lane"},
+    {2300, "Old Yharnam"}, {2400, "Cathedral Ward"}, {2410, "Central Yharnam"},
+    {2411, "Iosefka's Clinic"}, {2420, "Upper Cathedral Ward"}, {2421, "Healing Church Workshop"},
+    {2422, "Altar of Despair"}, {2500, "Forsaken Cainhurst Castle"}, {2600, "Nightmare of Mensis"},
+    {2700, "Forbidden Woods"}, {2800, "Yahar'gul, Unseen Village"}, {3200, "Byrgenwerth"},
+    {3201, "Lecture Building"}, {3202, "Moonside Lake"}, {3300, "Nightmare Frontier"},
+    {3400, "Hunter's Nightmare"}, {3500, "Research Hall"}, {3600, "Fishing Hamlet"},
+}};
+
+constexpr std::array<std::pair<s32, const char*>, 87> BbscBossNames{{
+    {1000, "Madman's Escort"}, {1010, "Forgotten Madman"}, {6400, "Old Hunter Henryk"},
+    {6500, "Valtr, Master of the League"}, {6505, "Valtr, Beast Eater"}, {6530, "Yamamura the Wanderer"},
+    {6540, "Younger Madaras Twin"}, {6550, "Mensis Scholar Damian"}, {6600, "Henriett"},
+    {6640, "Defector Antal"}, {7040, "Tomb Prospector Olek"}, {7045, "Tomb Prospector Gremia"},
+    {7060, "Beastclaw Jozef"}, {7160, "Queen Killer"}, {7300, "Vitus"}, {7310, "Madman Wallar"},
+    {101000, "Degenerate Beast"}, {106000, "Brainsucker"}, {127000, "Maneater Boar"},
+    {209000, "Blood-starved Beast"}, {209010, "Blood-starved Beast"}, {210000, "The Witch of Hemwick"},
+    {212010, "Shadow of Yharnam"}, {212020, "Shadow of Yharnam"}, {212030, "Shadow of Yharnam"},
+    {216000, "Keeper of the Old Lords"}, {218000, "Loran Silverbeast"}, {232000, "Martyr Logarius"},
+    {251000, "Ebrietas, Daughter of the Cosmos"}, {251010, "Ebrietas, Daughter of the Cosmos"},
+    {257000, "Celestial Emissary"}, {257010, "Celestial Emissary"}, {271000, "Father Gascoigne"},
+    {272000, "Father Gascoigne"}, {304000, "Merciless Watcher"}, {304001, "Watcher Chieftain"},
+    {304002, "Merciless Watcher"}, {304003, "Merciless Watcher"}, {305000, "Pthumerian Descendant"},
+    {305001, "Pthumerian Descendant"}, {305002, "Pthumerian Elder"}, {306000, "Pthumerian Bride"},
+    {306001, "Yharnam, Pthumerian Queen"}, {313000, "Undead Giant"}, {403000, "Living Failures"},
+    {450000, "Laurence, the First Vicar"}, {451000, "Ludwig the Accursed"}, {451005, "Ludwig, the Holy Blade"},
+    {452000, "Lady Maria of the Astral Clocktower"}, {453000, "Orphan of Kos"}, {454000, "Orphan of Kos"},
+    {500000, "Cleric Beast"}, {501000, "Watchdog of the Old Lords"}, {502000, "Vicar Amelia"},
+    {504000, "Loran Darkbeast"}, {504010, "Abhorrent Beast"}, {507000, "The One Reborn"},
+    {508000, "Darkbeast Paarl"}, {508010, "Loran Darkbeast"}, {509000, "Bloodletting Beast"},
+    {509010, "Bloodletting Beast"}, {510000, "Rom, the Vacuous Spider"}, {510010, "Rom, the Vacuous Spider"},
+    {511000, "Great One Beast"}, {512000, "Amygdala"}, {512010, "Amygdala"}, {540000, "Moon Presence"},
+    {551000, "Mergo's Wet Nurse"}, {551010, "Mergo's Wet Nurse"}, {750000, "Beast-possessed Soul"},
+    {802000, "Slug Princess"}, {803000, "Heroine Doll"}, {804000, "Gehrman, the First Hunter"},
+    {805000, "Gehrman, the First Hunter"}, {899000, "Micolash, Host of the Nightmare"},
+    {899010, "Vileblood Hunter Alfred"}, {900020, "The Vileblood"}, {900030, "The Executioners"},
+    {900040, "Hunter of Hunters"}, {901040, "Nameless Tomb Prospector"}, {901060, "Izzy's Admirer"},
+    {901070, "Nameless Madman"}, {901110, "Bone Ash Hunter Carla"}, {901150, "Drifting Vileblood Leo"},
+    {901160, "Ardeo Man"}, {901170, "Defeated Hunter"}, {901180, "Choir Intelligencer Edgar"},
+}};
+
+const char* FindBbscName(std::span<const std::pair<s32, const char*>> names, s32 id) {
+    for (const auto& [key, text] : names) {
+        if (key == id) return text;
+    }
+    return nullptr;
+}
+
+static std::string GetAreaName(uint32_t map_id) {
+    if (map_id == 0) return "";
+    uint32_t area = (map_id >> 24) & 0xFF;
+    uint32_t block = (map_id >> 16) & 0xFF;
+    
+    if (area == 29) return "Chalice Dungeon";
+    if (const char* name = FindBbscName(BbscPlaceNames, area * 100 + block * 10)) return name;
+    if (const char* name = FindBbscName(BbscPlaceNames, area * 100)) return name;
+    
+    char buf[32]; std::snprintf(buf, sizeof(buf), "m%02d_%02d", area, block);
+    return buf;
+}
 
 // ------------------------------------------------------------------ globals
 
@@ -190,7 +260,6 @@ public:
     }
 };
 
-// Find all PIDs matching the process name
 static std::vector<DWORD> find_processes(const std::string& name) {
     std::vector<DWORD> pids;
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -239,8 +308,27 @@ static uintptr_t find_base(const Process& p, const std::vector<uintptr_t>& bases
 
 struct Stats {
     int level, insight, echoes, hp, maxhp;
+    uint32_t map_id;
+    std::string area_name;
+    std::string boss_name;
     std::array<int, 6> attrs;
 };
+
+static std::string GetBossName(const Process& p, uintptr_t base) {
+    uint64_t gauge = 0;
+    if (!p.read(base + BOSS_GAUGE_ADDR, gauge) || !gauge) return "";
+    for (int i = 0; i < 3; ++i) {
+        int32_t handle = -1;
+        if (p.read(gauge + 0x165C + i * 0x14, handle) && handle != -1) {
+            int32_t boss_id = -1;
+            if (p.read(gauge + 0x1658 + i * 0x14, boss_id)) {
+                if (const char* name = FindBbscName(BbscBossNames, boss_id)) return name;
+                return "Unknown Boss";
+            }
+        }
+    }
+    return "";
+}
 
 static std::optional<Stats> read_stats(const Process& p, uintptr_t base) {
     uint64_t gdm = 0;
@@ -272,6 +360,17 @@ static std::optional<Stats> read_stats(const Process& p, uintptr_t base) {
     if (s.echoes  < 0 || s.echoes  > 999999999) return std::nullopt;
     if (s.maxhp   <= 0 || s.maxhp  >= 100000) return std::nullopt;
     if (s.hp      < 0 || s.hp      > s.maxhp) return std::nullopt;
+
+    uint32_t map_id = 0;
+    if (p.read(base + MAP_ID_ADDR, map_id)) {
+        s.map_id = map_id;
+        s.area_name = GetAreaName(map_id);
+    } else {
+        s.map_id = 0;
+    }
+
+    s.boss_name = GetBossName(p, base);
+
     return s;
 }
 
@@ -408,14 +507,20 @@ static json build_presence(const std::optional<Stats>& stats, Session& session, 
         for (const auto& t : HUNTER_TITLES) if (level >= t.level) title = t.name;
     }
 
+    // Details: Level Up notice, or Boss Fight, or Area
     if (cfg.show_level_up && session.level_up_active(now)) {
         char b[64]; std::snprintf(b, sizeof(b), "\u2726 Ascended to Level %d", session.level_up_to());
         data["details"] = b;
+    } else if (!stats->boss_name.empty()) {
+        data["details"] = "Boss Fight: " + stats->boss_name;
+    } else if (!stats->area_name.empty()) {
+        data["details"] = "In " + stats->area_name;
     } else {
         char b[128]; std::snprintf(b, sizeof(b), "%s \u2022 Lv %d", title.c_str(), level);
         data["details"] = b;
     }
 
+    // State: Stats + Role
     std::vector<std::string> parts;
     if (cfg.show_echoes) {
         char b[128]; std::snprintf(b, sizeof(b), "\U0001FA78 %s Echoes", format_thousands(stats->echoes).c_str());
@@ -430,17 +535,18 @@ static json build_presence(const std::optional<Stats>& stats, Session& session, 
         char b[64]; std::snprintf(b, sizeof(b), "+%d level%s", g, g == 1 ? "" : "s");
         parts.push_back(b);
     }
-    if (parts.empty()) {
-        data["state"] = "Hunting in Yharnam";
-    } else {
-        std::string s;
-        for (size_t i = 0; i < parts.size(); ++i) {
-            if (i) s += " \u2022 ";
-            s += parts[i];
-        }
-        data["state"] = s;
-    }
+    
+    std::string role_str = (!stats->boss_name.empty() || !stats->area_name.empty()) ? "Solo Hunter" : "Solo hunter";
+    parts.push_back(role_str);
 
+    std::string s;
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i) s += " \u2022 ";
+        s += parts[i];
+    }
+    data["state"] = s;
+
+    // Large text (Tooltip)
     if (cfg.show_attributes_tooltip) {
         std::string attrs;
         for (int i = 0; i < 6; ++i) {
@@ -534,6 +640,8 @@ static void probe_mode(const Config& cfg) {
             " | Echoes: " + std::to_string(stats->echoes) + 
             " | Insight: " + std::to_string(stats->insight) + 
             " | Max HP: " + std::to_string(stats->maxhp));
+        log("  -> Map ID: " + hex(stats->map_id) + " (" + stats->area_name + ")");
+        log("  -> Boss: " + (stats->boss_name.empty() ? "None" : stats->boss_name));
     }
 }
 
@@ -566,7 +674,6 @@ static void run(const Config& cfg) {
     while (true) {
         DWORD pid = companion_pid;
         
-        // If not in companion mode, find the correct PID (the one with game memory)
         if (!companion) {
             auto pids = find_processes(cfg.process_name);
             pid = 0;
@@ -574,7 +681,7 @@ static void run(const Config& cfg) {
                 Process test_proc;
                 if (test_proc.open(p) && find_base(test_proc, cfg.image_bases)) {
                     pid = p;
-                    break; // Found the correct process!
+                    break;
                 }
             }
         }
