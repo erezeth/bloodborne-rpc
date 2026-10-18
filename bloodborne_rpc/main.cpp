@@ -3,12 +3,9 @@
 //
 // Bloodborne PC (bbport) - Discord Rich Presence companion.
 // READ-ONLY: this tool never writes to the game's memory.
-// 
-// Based on the original Python implementation by CLS_AMG (BBSC).
-// Pointer layout credit: GoldHEN Cheat Repository (Shiningami) and
-// ASNH0/Bloodborne-shadps4-mod-menu (MIT).
 
 #define NOMINMAX
+
 #include <windows.h>
 #include <tlhelp32.h>
 
@@ -102,7 +99,7 @@ static fs::path exe_directory() {
 
 struct Config {
     std::string client_id;
-    std::string process_name = "bb-probe.exe";
+    std::string process_name = "Bloodborne.exe"; // Default diubah ke Bloodborne.exe
     std::vector<uintptr_t> image_bases = {0x800000000};
     int attach_delay = 5;
     int update_interval = 15;
@@ -196,22 +193,22 @@ public:
     }
 };
 
-static DWORD find_process(const std::string& name) {
+// Fungsi BARU: Cari semua PID dengan nama proses tersebut
+static std::vector<DWORD> find_processes(const std::string& name) {
+    std::vector<DWORD> pids;
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE) return 0;
+    if (snap == INVALID_HANDLE_VALUE) return pids;
     PROCESSENTRY32W pe{};
     pe.dwSize = sizeof(pe);
-    DWORD pid = 0;
     if (Process32FirstW(snap, &pe)) {
         do {
             if (_wcsicmp(pe.szExeFile, std::wstring(name.begin(), name.end()).c_str()) == 0) {
-                pid = pe.th32ProcessID;
-                break;
+                pids.push_back(pe.th32ProcessID);
             }
         } while (Process32NextW(snap, &pe));
     }
     CloseHandle(snap);
-    return pid;
+    return pids;
 }
 
 static bool pid_alive(DWORD pid, const std::string& name_hint = "") {
@@ -511,17 +508,28 @@ static bool should_skip(const Config& cfg, const std::string& mode, std::string&
 // ------------------------------------------------------------------ entry & run
 
 static void probe_mode(const Config& cfg) {
-    DWORD pid = find_process(cfg.process_name);
-    if (!pid) { log(cfg.process_name + " is not running"); return; }
-    Process p;
-    if (!p.open(pid)) { log("cannot open process"); return; }
-    uintptr_t base = find_base(p, cfg.image_bases);
-    log("pid=" + std::to_string(pid) + " base=" + (base ? hex(base) : "NO"));
-    if (!base) return;
-    auto stats = read_stats(p, base);
-    if (!stats) { log("stats: null (title screen / not loaded)"); return; }
-    log("level=" + std::to_string(stats->level) + " echoes=" + std::to_string(stats->echoes)
-        + " insight=" + std::to_string(stats->insight) + " maxhp=" + std::to_string(stats->maxhp));
+    auto pids = find_processes(cfg.process_name);
+    if (pids.empty()) { log(cfg.process_name + " is not running"); return; }
+    
+    log("Ditemukan " + std::to_string(pids.size()) + " proses bernama " + cfg.process_name);
+    
+    for (DWORD pid : pids) {
+        Process p;
+        if (!p.open(pid)) {
+            log("pid=" + std::to_string(pid) + " -> GAGAL BUKA PROCESS (mungkin butuh Admin)");
+            continue;
+        }
+        uintptr_t base = find_base(p, cfg.image_bases);
+        if (!base) {
+            log("pid=" + std::to_string(pid) + " -> base=NO (Ini bukan game utamanya / belum masuk gameplay)");
+            continue;
+        }
+        log("pid=" + std::to_string(pid) + " -> base=" + hex(base) + " (KETEMU!)");
+        auto stats = read_stats(p, base);
+        if (!stats) { log("  stats: null (masih di menu / loading)"); continue; }
+        log("  level=" + std::to_string(stats->level) + " echoes=" + std::to_string(stats->echoes)
+            + " insight=" + std::to_string(stats->insight) + " maxhp=" + std::to_string(stats->maxhp));
+    }
 }
 
 static void run(const Config& cfg) {
@@ -542,6 +550,7 @@ static void run(const Config& cfg) {
         log("Not starting: " + reason + ".");
         return;
     }
+    
     if (companion) log("Companion mode: watching game pid " + std::to_string(companion_pid));
     else            log("Waiting for " + cfg.process_name + " ...");
 
@@ -550,7 +559,21 @@ static void run(const Config& cfg) {
     const std::string check_name = companion ? "" : cfg.process_name;
 
     while (true) {
-        DWORD pid = companion ? companion_pid : find_process(cfg.process_name);
+        DWORD pid = companion_pid;
+        
+        // Kalau bukan companion mode, cari PID yang benar (yang punya memory game)
+        if (!companion) {
+            auto pids = find_processes(cfg.process_name);
+            pid = 0;
+            for (DWORD p : pids) {
+                Process test_proc;
+                if (test_proc.open(p) && find_base(test_proc, cfg.image_bases)) {
+                    pid = p;
+                    break; // Ketemu proses yang benar!
+                }
+            }
+        }
+
         if (companion && !pid_alive(pid)) { log("Game process is not running; exiting."); return; }
         if (!pid) { std::this_thread::sleep_for(std::chrono::seconds(3)); continue; }
 
