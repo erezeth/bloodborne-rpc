@@ -8,6 +8,7 @@
 // Pointer layout credit: GoldHEN Cheat Repository (Shiningami) and
 // ASNH0/Bloodborne-shadps4-mod-menu (MIT).
 
+#define NOMINMAX
 #include <windows.h>
 #include <tlhelp32.h>
 
