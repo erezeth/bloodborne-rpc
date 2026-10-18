@@ -1,7 +1,8 @@
-// Bloodborne PC (bbport) - Discord Rich Presence companion.
-// READ-ONLY: this tool never writes to the game's memory.
 // SPDX-FileCopyrightText: Copyright 2026 @erezeth
 // SPDX-License-Identifier: GPL-2.0-or-later
+//
+// Bloodborne PC (bbport) - Discord Rich Presence companion.
+// READ-ONLY: this tool never writes to the game's memory.
 
 #define NOMINMAX
 #include <windows.h>
