@@ -9,7 +9,7 @@ jobs:
       uses: ilammy/msvc-dev-cmd@v1
     - name: Build
       run: |
-        cd tools/bloodborne_rpc
+        cd bloodborne_rpc
         cl /nologo /std:c++17 /O2 /EHsc /MT /utf-8 /DUNICODE /D_UNICODE main.cpp /Fe:BloodborneRPC.exe /link /SUBSYSTEM:WINDOWS kernel32.lib user32.lib
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
