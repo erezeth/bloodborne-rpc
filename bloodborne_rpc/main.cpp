@@ -1,11 +1,8 @@
 // Bloodborne PC (bbport) - Discord Rich Presence companion.
 // READ-ONLY: this tool never writes to the game's memory.
-
 #define NOMINMAX
-
 #include <windows.h>
 #include <tlhelp32.h>
-
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -28,11 +25,10 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 using clk = std::chrono::steady_clock;
 
-// ------------------------------------------------------------------ constants
-
+// ------------------------------------------------------------------ OFFSETS
 constexpr uintptr_t GAME_DATA_MAN = 0x553B130;
-constexpr uintptr_t MAP_ID_ADDR = 0x553B148;    
-constexpr uintptr_t BOSS_GAUGE_ADDR = 0x5562878; 
+constexpr uintptr_t MAP_ID_ADDR = 0x0553B148;    
+constexpr uintptr_t BOSS_GAUGE_ADDR = 0x05562878; 
 
 constexpr int PGD_HP = 0x14, PGD_MAXHP = 0x18;
 constexpr int PGD_INSIGHT = 0x84, PGD_LEVEL = 0x90, PGD_ECHOES = 0x94;
@@ -51,7 +47,7 @@ constexpr TitleDef HUNTER_TITLES[] = {
     {120, "Dreaming Hunter"}, {180, "Hunter of Hunters"},
 };
 
-// ------------------------------------------------------------------ GAME DATA TABLES (from BBSC)
+// ------------------------------------------------------------------ GAME DATA
 constexpr std::array<std::pair<int32_t, const char*>, 21> BbscPlaceNames{{
     {2100, "Hunter's Dream"}, {2110, "Abandoned Old Workshop"}, {2200, "Hemwick Charnel Lane"},
     {2300, "Old Yharnam"}, {2400, "Cathedral Ward"}, {2410, "Central Yharnam"},
@@ -94,7 +90,6 @@ constexpr std::array<std::pair<int32_t, const char*>, 87> BbscBossNames{{
     {901160, "Ardeo Man"}, {901170, "Defeated Hunter"}, {901180, "Choir Intelligencer Edgar"},
 }};
 
-// Ganti std::span dengan template untuk kompatibilitas C++17
 template <size_t N>
 const char* FindBbscName(const std::array<std::pair<int32_t, const char*>, N>& names, int32_t id) {
     for (const auto& [key, text] : names) {
@@ -108,6 +103,9 @@ static std::string GetAreaName(uint32_t map_id) {
     int32_t area = (map_id >> 24) & 0xFF;
     int32_t block = (map_id >> 16) & 0xFF;
     
+    // Validasi: Cegah memory sampah
+    if (area > 40 || block > 20) return ""; 
+
     if (area == 29) return "Chalice Dungeon";
     if (const char* name = FindBbscName(BbscPlaceNames, area * 100 + block * 10)) return name;
     if (const char* name = FindBbscName(BbscPlaceNames, area * 100)) return name;
@@ -117,10 +115,7 @@ static std::string GetAreaName(uint32_t map_id) {
 }
 
 // ------------------------------------------------------------------ globals
-
 static fs::path g_exe_dir;
-
-// ------------------------------------------------------------------ utils
 
 static std::string hex(uintptr_t v) {
     char b[32]; std::snprintf(b, sizeof(b), "0x%llx", (unsigned long long)v);
@@ -128,20 +123,14 @@ static std::string hex(uintptr_t v) {
 }
 
 static void log(const std::string& msg) {
-    char ts[16];
-    std::time_t t = std::time(nullptr);
-    std::tm tb{}; localtime_s(&tb, &t);
+    char ts[16]; std::time_t t = std::time(nullptr); std::tm tb{}; localtime_s(&tb, &t);
     std::strftime(ts, sizeof(ts), "%H:%M:%S", &tb);
-
     std::string line = std::string("[") + ts + "] " + msg;
-
     std::ofstream f(g_exe_dir / "rpc.log", std::ios::app);
     if (f) f << line << "\n";
-
     HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
     if (out && out != INVALID_HANDLE_VALUE) {
-        DWORD written = 0;
-        std::string console_line = line + "\n";
+        DWORD written = 0; std::string console_line = line + "\n";
         WriteFile(out, console_line.data(), (DWORD)console_line.size(), &written, nullptr);
     }
 }
@@ -154,42 +143,28 @@ static void fatal(const std::string& msg) {
 }
 
 static fs::path exe_directory() {
-    wchar_t buf[MAX_PATH];
-    DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    wchar_t buf[MAX_PATH]; DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
     if (n == 0) return fs::current_path();
-    try { return fs::path(std::wstring(buf, n)).parent_path(); }
-    catch (...) { return fs::current_path(); }
+    try { return fs::path(std::wstring(buf, n)).parent_path(); } catch (...) { return fs::current_path(); }
 }
 
 // ------------------------------------------------------------------ config
-
 struct Config {
     std::string client_id;
     std::string process_name = "bb-probe.exe"; 
     std::vector<uintptr_t> image_bases = {0x800000000};
-    int attach_delay = 5;
-    int update_interval = 15;
+    int attach_delay = 5, update_interval = 15;
     double poll_interval = 1.0;
-    std::string large_image = "bloodborne_logo";
-    std::string small_image;
+    std::string large_image = "bloodborne_logo", small_image;
     json buttons = json::array();
     bool offline_only = true;
-    bool show_titles = true;
-    bool show_echoes = true;
-    bool show_insight = true;
-    bool show_level_up = true;
-    bool show_session_levels = true;
-    bool show_attributes_tooltip = true;
+    bool show_titles = true, show_echoes = true, show_insight = true, show_level_up = true, show_session_levels = true, show_attributes_tooltip = true;
 };
 
 static Config load_config(const fs::path& path) {
-    Config c;
-    if (!fs::exists(path)) return c;
+    Config c; if (!fs::exists(path)) return c;
     try {
-        std::ifstream f(path);
-        json j; f >> j;
-        if (!j.is_object()) throw std::runtime_error("not an object");
-
+        std::ifstream f(path); json j; f >> j;
         if (j.contains("client_id") && j["client_id"].is_string()) c.client_id = j["client_id"].get<std::string>();
         if (j.contains("process_name") && j["process_name"].is_string()) c.process_name = j["process_name"].get<std::string>();
         if (j.contains("image_base_candidates") && j["image_base_candidates"].is_array()) {
@@ -211,7 +186,6 @@ static Config load_config(const fs::path& path) {
         if (j.contains("small_image")) c.small_image = j["small_image"].get<std::string>();
         if (j.contains("buttons")) c.buttons = j["buttons"];
         if (j.contains("offline_only")) c.offline_only = j["offline_only"].get<bool>();
-        
         if (j.contains("show") && j["show"].is_object()) {
             const auto& s = j["show"];
             if (s.contains("titles")) c.show_titles = s["titles"].get<bool>();
@@ -226,85 +200,52 @@ static Config load_config(const fs::path& path) {
 }
 
 // ------------------------------------------------------------------ process
-
 class Process {
     HANDLE h_ = nullptr;
 public:
-    Process() = default;
-    Process(const Process&) = delete;
-    Process& operator=(const Process&) = delete;
+    Process() = default; Process(const Process&) = delete; Process& operator=(const Process&) = delete;
     Process(Process&& o) noexcept : h_(o.h_) { o.h_ = nullptr; }
-    Process& operator=(Process&& o) noexcept {
-        if (this != &o) { close(); h_ = o.h_; o.h_ = nullptr; }
-        return *this;
-    }
+    Process& operator=(Process&& o) noexcept { if (this != &o) { close(); h_ = o.h_; o.h_ = nullptr; } return *this; }
     ~Process() { close(); }
-
-    bool open(DWORD pid) {
-        close();
-        h_ = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
-        return h_ != nullptr;
-    }
-    void close() {
-        if (h_) { CloseHandle(h_); h_ = nullptr; }
-    }
+    bool open(DWORD pid) { close(); h_ = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid); return h_ != nullptr; }
+    void close() { if (h_) { CloseHandle(h_); h_ = nullptr; } }
     bool read(uintptr_t addr, void* buf, size_t size) const {
-        if (!h_) return false;
-        SIZE_T got = 0;
+        if (!h_) return false; SIZE_T got = 0;
         return ReadProcessMemory(h_, (LPCVOID)addr, buf, size, &got) && got == size;
     }
-    template <typename T>
-    bool read(uintptr_t addr, T& out) const {
-        return read(addr, &out, sizeof(T));
-    }
+    template <typename T> bool read(uintptr_t addr, T& out) const { return read(addr, &out, sizeof(T)); }
 };
 
 static std::vector<DWORD> find_processes(const std::string& name) {
-    std::vector<DWORD> pids;
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    std::vector<DWORD> pids; HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return pids;
-    PROCESSENTRY32W pe{};
-    pe.dwSize = sizeof(pe);
+    PROCESSENTRY32W pe{}; pe.dwSize = sizeof(pe);
     if (Process32FirstW(snap, &pe)) {
-        do {
-            if (_wcsicmp(pe.szExeFile, std::wstring(name.begin(), name.end()).c_str()) == 0) {
-                pids.push_back(pe.th32ProcessID);
-            }
-        } while (Process32NextW(snap, &pe));
+        do { if (_wcsicmp(pe.szExeFile, std::wstring(name.begin(), name.end()).c_str()) == 0) pids.push_back(pe.th32ProcessID); } while (Process32NextW(snap, &pe));
     }
-    CloseHandle(snap);
-    return pids;
+    CloseHandle(snap); return pids;
 }
 
 static bool pid_alive(DWORD pid, const std::string& name_hint = "") {
-    if (!pid) return false;
-    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!h) return false;
-    DWORD exit_code = 0;
+    if (!pid) return false; HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!h) return false; DWORD exit_code = 0;
     bool alive = GetExitCodeProcess(h, &exit_code) && exit_code == STILL_ACTIVE;
     if (alive && !name_hint.empty()) {
         wchar_t buf[MAX_PATH]; DWORD size = MAX_PATH;
         if (QueryFullProcessImageNameW(h, 0, buf, &size)) {
             fs::path p(std::wstring(buf, size));
-            if (_wcsicmp(p.filename().c_str(), std::wstring(name_hint.begin(), name_hint.end()).c_str()) != 0) {
-                alive = false;
-            }
+            if (_wcsicmp(p.filename().c_str(), std::wstring(name_hint.begin(), name_hint.end()).c_str()) != 0) alive = false;
         }
     }
-    CloseHandle(h);
-    return alive;
+    CloseHandle(h); return alive;
 }
 
 static uintptr_t find_base(const Process& p, const std::vector<uintptr_t>& bases) {
-    for (auto b : bases) {
-        uint8_t tmp[8];
-        if (p.read(b + GAME_DATA_MAN, tmp, sizeof(tmp))) return b;
-    }
+    for (auto b : bases) { uint8_t tmp[8]; if (p.read(b + GAME_DATA_MAN, tmp, sizeof(tmp))) return b; }
     return 0;
 }
 
 // ------------------------------------------------------------------ stats
-
 struct Stats {
     int level, insight, echoes, hp, maxhp;
     uint32_t map_id;
@@ -315,7 +256,7 @@ struct Stats {
 
 static std::string GetBossName(const Process& p, uintptr_t base) {
     uint64_t gauge = 0;
-    if (!p.read(base + BOSS_GAUGE_ADDR, gauge) || !gauge) return "";
+    if (!p.read(base + BOSS_GAUGE_ADDR, gauge) || !gauge || gauge < 0x10000) return "";
     for (int i = 0; i < 3; ++i) {
         int32_t handle = -1;
         if (p.read(gauge + 0x165C + i * 0x14, handle) && handle != -1) {
@@ -330,35 +271,24 @@ static std::string GetBossName(const Process& p, uintptr_t base) {
 }
 
 static std::optional<Stats> read_stats(const Process& p, uintptr_t base) {
-    uint64_t gdm = 0;
-    if (!p.read(base + GAME_DATA_MAN, gdm) || !gdm) return std::nullopt;
-    uint64_t pgd = 0;
-    if (!p.read(gdm + 8, pgd) || !pgd) return std::nullopt;
-
-    uint8_t blk[PGD_READ_SIZE];
-    if (!p.read(pgd, blk, sizeof(blk))) return std::nullopt;
-
-    auto i32 = [&](int off) {
-        int32_t v; std::memcpy(&v, blk + off, 4); return v;
-    };
-
+    uint64_t gdm = 0; if (!p.read(base + GAME_DATA_MAN, gdm) || !gdm || gdm < 0x10000) return std::nullopt;
+    uint64_t pgd = 0; if (!p.read(gdm + 8, pgd) || !pgd || pgd < 0x10000) return std::nullopt;
+    uint8_t blk[PGD_READ_SIZE]; if (!p.read(pgd, blk, sizeof(blk))) return std::nullopt;
+    auto i32 = [&](int off) { int32_t v; std::memcpy(&v, blk + off, 4); return v; };
+    
     Stats s{};
     for (int i = 0; i < 6; ++i) s.attrs[i] = i32(PGD_ATTR_DEFS[i].off);
     for (int a : s.attrs) if (a < 1 || a > 99) return std::nullopt;
-
+    
     s.level = i32(PGD_LEVEL);
     int sum = 0; for (int a : s.attrs) sum += a;
     if (s.level != sum - 50) return std::nullopt;
-
-    s.insight = i32(PGD_INSIGHT);
-    s.echoes  = i32(PGD_ECHOES);
-    s.hp      = i32(PGD_HP);
-    s.maxhp   = i32(PGD_MAXHP);
-
+    
+    s.insight = i32(PGD_INSIGHT); s.echoes = i32(PGD_ECHOES); s.hp = i32(PGD_HP); s.maxhp = i32(PGD_MAXHP);
     if (s.insight < 0 || s.insight > 999) return std::nullopt;
-    if (s.echoes  < 0 || s.echoes  > 999999999) return std::nullopt;
-    if (s.maxhp   <= 0 || s.maxhp  >= 100000) return std::nullopt;
-    if (s.hp      < 0 || s.hp      > s.maxhp) return std::nullopt;
+    if (s.echoes < 0 || s.echoes > 999999999) return std::nullopt;
+    if (s.maxhp <= 0 || s.maxhp >= 100000) return std::nullopt;
+    if (s.hp < 0 || s.hp > s.maxhp) return std::nullopt;
 
     uint32_t map_id = 0;
     if (p.read(base + MAP_ID_ADDR, map_id)) {
@@ -369,12 +299,10 @@ static std::optional<Stats> read_stats(const Process& p, uintptr_t base) {
     }
 
     s.boss_name = GetBossName(p, base);
-
     return s;
 }
 
 // ------------------------------------------------------------------ session
-
 class Session {
     static constexpr int LEVEL_UP_SECONDS = 120;
     int last_level_ = -1;
@@ -382,17 +310,13 @@ class Session {
     int levels_gained_ = 0;
     int level_up_to_ = 0;
     clk::time_point level_up_until_{};
-
 public:
     void update(const std::optional<Stats>& stats, clk::time_point now) {
         if (!stats) { last_level_ = -1; return; }
         int level = stats->level;
         if (last_level_ < 0 && known_level_ >= 0) {
             int diff = level - known_level_;
-            if (diff < 0 || diff > 5) {
-                levels_gained_ = 0;
-                level_up_until_ = {};
-            }
+            if (diff < 0 || diff > 5) { levels_gained_ = 0; level_up_until_ = {}; }
         }
         known_level_ = level;
         if (last_level_ >= 0 && level > last_level_ && level - last_level_ <= 5) {
@@ -402,23 +326,18 @@ public:
         }
         last_level_ = level;
     }
-
     int levels_gained() const { return levels_gained_; }
     bool level_up_active(clk::time_point now) const { return now < level_up_until_; }
     int level_up_to() const { return level_up_to_; }
 };
 
 // ------------------------------------------------------------------ discord pipe
-
 class DiscordPipe {
     HANDLE pipe_ = INVALID_HANDLE_VALUE;
 public:
     ~DiscordPipe() { close(); }
-    void close() {
-        if (pipe_ != INVALID_HANDLE_VALUE) { CloseHandle(pipe_); pipe_ = INVALID_HANDLE_VALUE; }
-    }
+    void close() { if (pipe_ != INVALID_HANDLE_VALUE) { CloseHandle(pipe_); pipe_ = INVALID_HANDLE_VALUE; } }
     bool connected() const { return pipe_ != INVALID_HANDLE_VALUE; }
-
     bool connect_pipe(const std::string& client_id) {
         close();
         for (int i = 0; i < 10; ++i) {
@@ -427,76 +346,50 @@ public:
             if (pipe_ != INVALID_HANDLE_VALUE) break;
         }
         if (pipe_ == INVALID_HANDLE_VALUE) return false;
-
         std::string hs = std::string("{\"v\":1,\"client_id\":\"") + client_id + "\"}";
         if (!send(0, hs)) { close(); return false; }
         return drain(true);
     }
-
     bool send(uint32_t opcode, const std::string& payload) {
         if (pipe_ == INVALID_HANDLE_VALUE) return false;
-        std::string frame(8, '\0');
-        std::memcpy(&frame[0], &opcode, 4);
-        uint32_t len = (uint32_t)payload.size();
-        std::memcpy(&frame[4], &len, 4);
-        frame += payload;
+        std::string frame(8, '\0'); std::memcpy(&frame[0], &opcode, 4);
+        uint32_t len = (uint32_t)payload.size(); std::memcpy(&frame[4], &len, 4); frame += payload;
         DWORD written = 0;
         return WriteFile(pipe_, frame.data(), (DWORD)frame.size(), &written, nullptr) && written == frame.size();
     }
-
     bool drain(bool wait) {
         for (;;) {
             DWORD avail = 0;
             if (!PeekNamedPipe(pipe_, nullptr, 0, nullptr, &avail, nullptr)) { close(); return false; }
             if (avail < 8 && !wait) return true;
-
-            uint32_t hdr[2] = {0, 0};
-            DWORD got = 0;
+            uint32_t hdr[2] = {0, 0}; DWORD got = 0;
             if (!ReadFile(pipe_, hdr, 8, &got, nullptr) || got != 8) { close(); return false; }
             std::string body(hdr[1], '\0');
-            if (hdr[1] > 0) {
-                if (!ReadFile(pipe_, body.data(), hdr[1], &got, nullptr) || got != hdr[1]) { close(); return false; }
-            }
-            if (hdr[0] == 2) {
-                log("Discord closed the connection.");
-                close(); return false;
-            }
+            if (hdr[1] > 0 && (!ReadFile(pipe_, body.data(), hdr[1], &got, nullptr) || got != hdr[1])) { close(); return false; }
+            if (hdr[0] == 2) { close(); return false; }
             wait = false;
         }
     }
 };
 
 // ------------------------------------------------------------------ presence
-
 static std::string format_thousands(int n) {
-    std::string s = std::to_string(n);
-    std::string out;
-    int c = 0;
-    for (int i = (int)s.size() - 1; i >= 0; --i) {
-        if (c > 0 && c % 3 == 0) out = ',' + out;
-        out = s[i] + out;
-        ++c;
-    }
+    std::string s = std::to_string(n), out; int c = 0;
+    for (int i = (int)s.size() - 1; i >= 0; --i) { if (c > 0 && c % 3 == 0) out = ',' + out; out = s[i] + out; ++c; }
     return out;
 }
 
 static json build_presence(const std::optional<Stats>& stats, Session& session, const Config& cfg, int64_t session_start_s, clk::time_point now) {
-    json data;
-    data["large_image"] = cfg.large_image;
-    data["start"] = session_start_s;
+    json data; data["large_image"] = cfg.large_image; data["start"] = session_start_s;
     if (!cfg.small_image.empty()) data["small_image"] = cfg.small_image;
     if (cfg.buttons.is_array() && !cfg.buttons.empty()) {
-        json btns = json::array();
-        int n = 0;
+        json btns = json::array(); int n = 0;
         for (const auto& b : cfg.buttons) { if (n++ >= 2) break; btns.push_back(b); }
         data["buttons"] = std::move(btns);
     }
 
     if (!stats) {
-        data["details"] = "Wandering the menus";
-        data["state"] = "Waiting for a hunter...";
-        data["large_text"] = "Bloodborne PC";
-        return data;
+        data["details"] = "Wandering the menus"; data["state"] = "Waiting for a hunter..."; data["large_text"] = "Bloodborne PC"; return data;
     }
 
     const int level = stats->level;
@@ -506,65 +399,33 @@ static json build_presence(const std::optional<Stats>& stats, Session& session, 
         for (const auto& t : HUNTER_TITLES) if (level >= t.level) title = t.name;
     }
 
-    // Details: Level Up notice, or Boss Fight, or Area
     if (cfg.show_level_up && session.level_up_active(now)) {
-        char b[64]; std::snprintf(b, sizeof(b), "\u2726 Ascended to Level %d", session.level_up_to());
-        data["details"] = b;
+        char b[64]; std::snprintf(b, sizeof(b), "\u2726 Ascended to Level %d", session.level_up_to()); data["details"] = b;
     } else if (!stats->boss_name.empty()) {
         data["details"] = "Boss Fight: " + stats->boss_name;
     } else if (!stats->area_name.empty()) {
         data["details"] = "In " + stats->area_name;
     } else {
-        char b[128]; std::snprintf(b, sizeof(b), "%s \u2022 Lv %d", title.c_str(), level);
-        data["details"] = b;
+        char b[128]; std::snprintf(b, sizeof(b), "%s \u2022 Lv %d", title.c_str(), level); data["details"] = b;
     }
 
-    // State: Stats + Role
     std::vector<std::string> parts;
-    if (cfg.show_echoes) {
-        char b[128]; std::snprintf(b, sizeof(b), "\U0001FA78 %s Echoes", format_thousands(stats->echoes).c_str());
-        parts.push_back(b);
-    }
-    if (cfg.show_insight) {
-        char b[64]; std::snprintf(b, sizeof(b), "Insight %d", stats->insight);
-        parts.push_back(b);
-    }
+    if (cfg.show_echoes) { char b[128]; std::snprintf(b, sizeof(b), "\U0001FA78 %s Echoes", format_thousands(stats->echoes).c_str()); parts.push_back(b); }
+    if (cfg.show_insight) { char b[64]; std::snprintf(b, sizeof(b), "Insight %d", stats->insight); parts.push_back(b); }
     if (cfg.show_session_levels && session.levels_gained() > 0) {
-        int g = session.levels_gained();
-        char b[64]; std::snprintf(b, sizeof(b), "+%d level%s", g, g == 1 ? "" : "s");
-        parts.push_back(b);
+        int g = session.levels_gained(); char b[64]; std::snprintf(b, sizeof(b), "+%d level%s", g, g == 1 ? "" : "s"); parts.push_back(b);
     }
-    
-    std::string role_str = (!stats->boss_name.empty() || !stats->area_name.empty()) ? "Solo Hunter" : "Solo hunter";
-    parts.push_back(role_str);
 
-    std::string s;
-    for (size_t i = 0; i < parts.size(); ++i) {
-        if (i) s += " \u2022 ";
-        s += parts[i];
-    }
+    std::string s; for (size_t i = 0; i < parts.size(); ++i) { if (i) s += " \u2022 "; s += parts[i]; }
     data["state"] = s;
 
-    // Large text (Tooltip)
     if (cfg.show_attributes_tooltip) {
         std::string attrs;
-        for (int i = 0; i < 6; ++i) {
-            if (i) attrs += " ";
-            attrs += PGD_ATTR_DEFS[i].name;
-            attrs += " ";
-            attrs += std::to_string(stats->attrs[i]);
-        }
-        char b[256]; std::snprintf(b, sizeof(b), "%s \u2022 Max HP %d", attrs.c_str(), stats->maxhp);
-        data["large_text"] = b;
-    } else {
-        data["large_text"] = "Bloodborne PC";
-    }
+        for (int i = 0; i < 6; ++i) { if (i) attrs += " "; attrs += PGD_ATTR_DEFS[i].name; attrs += " "; attrs += std::to_string(stats->attrs[i]); }
+        char b[256]; std::snprintf(b, sizeof(b), "%s \u2022 Max HP %d", attrs.c_str(), stats->maxhp); data["large_text"] = b;
+    } else { data["large_text"] = "Bloodborne PC"; }
 
-    for (auto it = data.begin(); it != data.end(); ++it) {
-        if (it->is_string() && it->get<std::string>().size() > 128) {
-            *it = it->get<std::string>().substr(0, 128);
-        }
-    }
+    for (auto it = data.begin(); it != data.end(); ++it) if (it->is_string() && it->get<std::string>().size() > 128) *it = it->get<std::string>().substr(0, 128);
     return data;
 }
 
@@ -573,95 +434,66 @@ static json to_discord_activity(const json& flat) {
     if (flat.contains("details")) a["details"] = flat["details"];
     if (flat.contains("state"))   a["state"]   = flat["state"];
     if (flat.contains("start"))   a["timestamps"] = {{"start", (int64_t)flat["start"] * 1000}};
-
     json assets = json::object();
     if (flat.contains("large_image")) assets["large_image"] = flat["large_image"];
     if (flat.contains("large_text"))  assets["large_text"]  = flat["large_text"];
-    if (flat.contains("small_image")) assets["small_image"] = flat["small_image"];
-    if (flat.contains("small_text"))  assets["small_text"]  = flat["small_text"];
     if (!assets.empty()) a["assets"] = std::move(assets);
-
-    if (flat.contains("buttons") && flat["buttons"].is_array() && !flat["buttons"].empty()) a["buttons"] = flat["buttons"];
     return a;
 }
 
 // ------------------------------------------------------------------ play mode
-
 static std::string play_mode() {
-    const char* pid = std::getenv("BB_GAME_PID");
-    if (!pid || !*pid) return ""; 
+    const char* pid = std::getenv("BB_GAME_PID"); if (!pid || !*pid) return ""; 
     for (const char* c = pid; *c; ++c) if (!std::isdigit((unsigned char)*c)) return "";
     if (auto coop = std::getenv("BB_COOP"); coop && std::string(coop) == "1") return "coop";
     if (auto online = std::getenv("BB_ONLINE"); online && std::string(online) == "1") {
-        auto backend = std::getenv("BB_NET_BACKEND");
-        return (backend && std::string(backend) == "thd") ? "thd" : "online";
+        auto backend = std::getenv("BB_NET_BACKEND"); return (backend && std::string(backend) == "thd") ? "thd" : "online";
     }
     return "offline";
 }
 
 static bool should_skip(const Config& cfg, const std::string& mode, std::string& reason) {
-    if (cfg.offline_only && !mode.empty() && mode != "offline") {
-        reason = "Play mode is " + mode + ", which has its own Rich Presence.";
-        return true;
-    }
+    if (cfg.offline_only && !mode.empty() && mode != "offline") { reason = "Play mode is " + mode + ", which has its own Rich Presence."; return true; }
     return false;
 }
 
 // ------------------------------------------------------------------ entry & run
-
 static void probe_mode(const Config& cfg) {
     auto pids = find_processes(cfg.process_name);
-    if (pids.empty()) { 
-        log("Process " + cfg.process_name + " is not running."); 
-        return; 
-    }
-    
+    if (pids.empty()) { log("Process " + cfg.process_name + " is not running."); return; }
     log("Found " + std::to_string(pids.size()) + " process(es) named " + cfg.process_name);
     
     for (DWORD pid : pids) {
-        Process p;
-        if (!p.open(pid)) {
-            log("PID " + std::to_string(pid) + ": Access denied (Try running as Administrator).");
-            continue;
-        }
+        Process p; if (!p.open(pid)) { log("PID " + std::to_string(pid) + ": Access denied (Try running as Administrator)."); continue; }
         uintptr_t base = find_base(p, cfg.image_bases);
-        if (!base) {
-            log("PID " + std::to_string(pid) + ": Base not found (Wrong process or still in menus).");
-            continue;
-        }
+        if (!base) { log("PID " + std::to_string(pid) + ": Base not found (Wrong process or still in menus)."); continue; }
+        
         log("PID " + std::to_string(pid) + ": Base found at " + hex(base) + " (MATCH!)");
-        auto stats = read_stats(p, base);
-        if (!stats) { 
-            log("  -> Stats: null (Still in menus / loading)."); 
-            continue; 
+        
+        // Logging Map Pointer Chain for Debugging
+        uint64_t map_list = 0;
+        if (p.read(base + MAP_ID_ADDR, map_list) && map_list) {
+            int32_t index = 0; uint64_t map_array = 0;
+            p.read(map_list + 0x20, index); p.read(map_list + 0x10, map_array);
+            int32_t count = 0; uint64_t entries = 0;
+            if (map_array) { p.read(map_array + 0x18, count); p.read(map_array + 0x20, entries); }
+            log("  -> Raw Map List: " + hex(map_list) + " | Index: " + std::to_string(index) + " | Array: " + hex(map_array) + " | Count: " + std::to_string(count) + " | Entries: " + hex(entries));
         }
-        log("  -> Level: " + std::to_string(stats->level) + 
-            " | Echoes: " + std::to_string(stats->echoes) + 
-            " | Insight: " + std::to_string(stats->insight) + 
-            " | Max HP: " + std::to_string(stats->maxhp));
+
+        auto stats = read_stats(p, base);
+        if (!stats) { log("  -> Stats: null (Still in menus / loading)."); continue; }
+        log("  -> Level: " + std::to_string(stats->level) + " | Echoes: " + std::to_string(stats->echoes) + " | Insight: " + std::to_string(stats->insight) + " | Max HP: " + std::to_string(stats->maxhp));
         log("  -> Map ID: " + hex(stats->map_id) + " (" + stats->area_name + ")");
         log("  -> Boss: " + (stats->boss_name.empty() ? "None" : stats->boss_name));
     }
 }
 
 static void run(const Config& cfg) {
-    if (cfg.client_id.empty() || !std::all_of(cfg.client_id.begin(), cfg.client_id.end(), ::isdigit)) {
-        fatal("Config Error: client_id must be your Discord Application ID (numbers only).");
-        return;
-    }
-
-    const bool companion = [] {
-        const char* pid = std::getenv("BB_GAME_PID");
-        return pid && *pid && std::all_of(pid, pid + std::strlen(pid), ::isdigit);
-    }();
+    if (cfg.client_id.empty() || !std::all_of(cfg.client_id.begin(), cfg.client_id.end(), ::isdigit)) { fatal("Config Error: client_id must be your Discord Application ID (numbers only)."); return; }
+    const bool companion = [] { const char* pid = std::getenv("BB_GAME_PID"); return pid && *pid && std::all_of(pid, pid + std::strlen(pid), ::isdigit); }();
     const DWORD companion_pid = companion ? (DWORD)std::strtoul(std::getenv("BB_GAME_PID"), nullptr, 10) : 0;
-
-    const std::string mode = play_mode();
-    std::string reason;
-    if (should_skip(cfg, mode, reason)) {
-        log("Skipping: " + reason);
-        return;
-    }
+    const std::string mode = play_mode(); std::string reason;
+    if (should_skip(cfg, mode, reason)) { log("Skipping: " + reason); return; }
     
     if (companion) log("Companion Mode: Watching game PID " + std::to_string(companion_pid));
     else           log("Standalone Mode: Waiting for " + cfg.process_name + " ...");
@@ -672,94 +504,56 @@ static void run(const Config& cfg) {
 
     while (true) {
         DWORD pid = companion_pid;
-        
         if (!companion) {
-            auto pids = find_processes(cfg.process_name);
-            pid = 0;
-            for (DWORD p : pids) {
-                Process test_proc;
-                if (test_proc.open(p) && find_base(test_proc, cfg.image_bases)) {
-                    pid = p;
-                    break;
-                }
-            }
+            auto pids = find_processes(cfg.process_name); pid = 0;
+            for (DWORD p : pids) { Process tp; if (tp.open(p) && find_base(tp, cfg.image_bases)) { pid = p; break; } }
         }
-
         if (companion && !pid_alive(pid)) { log("Game process closed, exiting."); return; }
         if (!pid) { std::this_thread::sleep_for(std::chrono::seconds(3)); continue; }
-
         std::this_thread::sleep_for(std::chrono::seconds(cfg.attach_delay));
         if (companion && !pid_alive(pid)) { log("Game closed before attachment, exiting."); return; }
 
-        Process proc;
-        if (!proc.open(pid)) { log("Failed to open process (Try running as Admin). Retrying..."); std::this_thread::sleep_for(std::chrono::seconds(10)); continue; }
+        Process proc; if (!proc.open(pid)) { log("Failed to open process (Try running as Admin). Retrying..."); std::this_thread::sleep_for(std::chrono::seconds(10)); continue; }
         uintptr_t base = find_base(proc, cfg.image_bases);
         if (!base) { log("Game memory not ready (might be loading). Retrying..."); std::this_thread::sleep_for(std::chrono::seconds(5)); continue; }
 
         DiscordPipe discord;
-        while (pid_alive(pid, check_name)) {
-            if (discord.connect_pipe(cfg.client_id)) break;
-            log("Failed to connect to Discord. Retrying in 5s...");
-            std::this_thread::sleep_for(std::chrono::seconds(5));
-        }
+        while (pid_alive(pid, check_name)) { if (discord.connect_pipe(cfg.client_id)) break; log("Failed to connect to Discord. Retrying in 5s..."); std::this_thread::sleep_for(std::chrono::seconds(5)); }
         log("Attached to PID " + std::to_string(pid) + " (Base: " + hex(base) + ")");
 
-        const int64_t start_s = (int64_t)std::time(nullptr);
-        Session session;
-        json last_payload;
-        auto last_sent = clk::time_point{};
+        const int64_t start_s = (int64_t)std::time(nullptr); Session session;
+        json last_payload; auto last_sent = clk::time_point{};
 
         while (pid_alive(pid, check_name)) {
-            if (!discord.connected()) {
-                if (!discord.connect_pipe(cfg.client_id)) { std::this_thread::sleep_for(std::chrono::seconds(5)); continue; }
-            }
-            discord.drain(false);
-            if (!discord.connected()) continue;
+            if (!discord.connected()) { if (!discord.connect_pipe(cfg.client_id)) { std::this_thread::sleep_for(std::chrono::seconds(5)); continue; } }
+            discord.drain(false); if (!discord.connected()) continue;
 
-            auto stats = read_stats(proc, base);
-            session.update(stats, clk::now());
+            auto stats = read_stats(proc, base); session.update(stats, clk::now());
             json payload = build_presence(stats, session, cfg, start_s, clk::now());
-
             auto now = clk::now();
+            
             if (payload != last_payload && (now - last_sent) >= std::chrono::seconds(update_interval)) {
-                json activity = to_discord_activity(payload);
-                json cmd = {
-                    {"cmd", "SET_ACTIVITY"},
-                    {"args", {{"pid", (int)pid}, {"activity", activity}}},
-                    {"nonce", std::to_string((uint64_t)now.time_since_epoch().count())}
-                };
+                json cmd = { {"cmd", "SET_ACTIVITY"}, {"args", {{"pid", (int)pid}, {"activity", to_discord_activity(payload)}}}, {"nonce", std::to_string((uint64_t)now.time_since_epoch().count())} };
                 if (discord.send(1, cmd.dump())) {
-                    last_payload = payload;
-                    last_sent = now;
+                    last_payload = payload; last_sent = now;
                     log("Presence Updated: " + payload.value("details", std::string()) + " | " + payload.value("state", std::string()));
-                } else {
-                    discord.close();
-                }
+                } else discord.close();
             }
             std::this_thread::sleep_for(poll);
         }
-        if (discord.connected()) {
-            json cmd = {{"cmd", "SET_ACTIVITY"}, {"args", {{"pid", (int)pid}}}, {"nonce", "0"}};
-            discord.send(1, cmd.dump());
-        }
+        if (discord.connected()) { json cmd = {{"cmd", "SET_ACTIVITY"}, {"args", {{"pid", (int)pid}}}, {"nonce", "0"}}; discord.send(1, cmd.dump()); }
         log("Game closed. Cleaning up presence.");
         if (companion) return;
         log("Waiting for game again...");
     }
 }
 
-static bool has_flag(const wchar_t* flag) {
-    return wcsstr(GetCommandLineW(), flag) != nullptr;
-}
+static bool has_flag(const wchar_t* flag) { return wcsstr(GetCommandLineW(), flag) != nullptr; }
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     g_exe_dir = exe_directory();
     const Config cfg = load_config(g_exe_dir / "config.json");
-
-    if (has_flag(L"--probe")) {
-        probe_mode(cfg);
-        return 0;
-    }
+    if (has_flag(L"--probe")) { probe_mode(cfg); return 0; }
     run(cfg);
     return 0;
 }
