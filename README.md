@@ -5,6 +5,9 @@ It shows your Current Area, Boss Detection, Hunter's level, Blood Echoes, Insigh
 
 > **Status: work in progress.** I haven't test it on every location and every boss.
 
+<img width="325" height="619" alt="image" src="https://github.com/user-attachments/assets/94e9df9d-defa-4528-b1c7-5f0ec05ed2f3" />
+
+
 ## Features
 
 - **Current Area:** Displays your hunter's current location, such as Central Yharnam.
