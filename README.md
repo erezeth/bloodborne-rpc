@@ -106,7 +106,7 @@ This project wouldn't be possible without the work of the community:
 - **Jgamrot**: the launcher fork used to develop and test the companion hook.
 - **deadinside28**: [bbport](https://github.com/deadinside28/bloodborne_pc), the native Bloodborne port.
 - **shadPS4 Emulator Project**: the foundation of the port's renderer; the memory layout read by this tool matches the one used under shadPS4.
-- **@erezeth**: author of this companion tool, its integration with the launcher, and testing on bbport.
+- **erezeth**: Author of this repository for the C++ implementation, memory offset X-Ray debugging, and launcher integration.
 
 ## License
 
